@@ -27,7 +27,6 @@ APPDIR="${HOME}"/.kubectl-pod-interface
 DAEMONSFILE="${APPDIR}"/kubectl-pod-interfaced
 LOGFILE=${APPDIR}/kubectl-pod-interface-${NOW}-${NOWT}.log
 
-
 # source scripts
 # for f in ${BASH_SOURCE[0]}/bin/*
 #
