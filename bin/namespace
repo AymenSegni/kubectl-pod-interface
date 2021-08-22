@@ -1,0 +1,31 @@
+# select namespace
+ns_current() {
+  # Borrowed partly from kubens current_namespace().
+  cur_ctx=$(kubectl config current-context)
+  echo "$(kubectl config view -o=jsonpath="{.contexts[?(@.name==\"${cur_ctx}\")].context.namespace}")"
+}
+
+ns_param() {
+  local ns=$(ns_select)
+  if [[ ! -z ${ns:-} ]]; then
+    echo "--namespace=${ns}"
+  fi
+}
+
+ns_list() {
+  kubectl get namespaces -o=jsonpath='{range .items[*].metadata.name}{@}{"\n"}{end}'
+}
+
+ns_number_list() {
+  ns_list | nl
+}
+
+ns_select() {
+  if [[ ! -z ${NS:-} ]]; then
+    ns_list | sed -n ${NS}p
+  elif [[ ! -z ${NAMESPACE:-} ]]; then
+    echo $NAMESPACE
+  else
+    ns_current
+  fi
+}
