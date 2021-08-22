@@ -40,7 +40,7 @@ var rootCmd = &cobra.Command{
 	Long: strings.ReplaceAll(`
 kubectl {COMMAND_NAME} is a fun, quick, 1-command, pod utility interactive kubectl plugin which wraps kubectl commands, to help you easily interact with your running kubernetes pods
 
-Manual:
+Get start:
 
   # 1. pex: quick, 1-command, interactive, Kubernetes pod exec utility
   # get a shell to a running Container.
