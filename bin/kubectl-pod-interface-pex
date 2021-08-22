@@ -34,38 +34,3 @@ po_exec_con() {
   kubectl $(ns_param) \
     exec -it $(po_select) $(co_param) -- sh -c ${COMMAND:-bash}
 }
-
-# Transform long options to short ones. Sick trick.
-# http://stackoverflow.com/a/30026641/4096495
-for arg in "$@"; do
-  shift
-  case "$arg" in
-    "--help")       set -- "$@" "-h" ;;
-    *)              set -- "$@" "$arg"
-  esac
-done
-
-while getopts :h OPT; do
-  case $OPT in
-    h ) HELP=true;;
-    \?) echo "Unknown option: -$OPTARG" >&2; exit 1;;
-    : ) echo "Missing option argument for -$OPTARG" >&2; exit 1;;
-  esac
-done
-shift $((OPTIND-1))
-
-# Usage, list, and exec should not happen simultaneously, so elif.
-if [[ ${HELP:-} == 'true' ]]; then
-  usage; exit 0
-else
-  ns=$(ns_current)
-  echo "Namespace? (default ${ns:-default}):"; ns_number_list; read NS;
-  echo 'Pod number? (default 1):'; po_number_list; read POD;
-  if [[ $(con_count) -gt 1 ]]; then
-    echo 'Container number? (default 1):'; con_number_list; read CON;
-    echo 'Command? (default bash)'; IFS= read COMMAND;
-    po_exec_con; exit 0
-  fi
-  echo 'Command? (default bash)'; IFS= read COMMAND;
-  po_exec
-fi
