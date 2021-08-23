@@ -27,19 +27,6 @@ APPDIR="${HOME}"/.kubectl-pod-interface
 DAEMONSFILE="${APPDIR}"/kubectl-pod-interfaced
 LOGFILE=${APPDIR}/kubectl-pod-interface-${NOW}-${NOWT}.log
 
-# source scripts
-# for f in ${BASH_SOURCE[0]}/bin/*
-#
-# do source $f 
-# 
-# done
-
-source kubectl-pod-interface-pdel.sh
-source kubectl-pod-interface-pex.sh
-source kubectl-pod-interface-plg.sh
-source kubectl-pod-interface-pof.sh
-source pod.sh
-source namespace.sh
 
 # We do this so the called script name variable is avilable in utility functions
 # below, in case of name change, brew alias, etc.
@@ -90,7 +77,81 @@ OPTIONS
 EOF
 }
 
+# namespaces lister
+# select namespace
+ns_current() {
+  # Borrowed partly from kubens current_namespace().
+  cur_ctx=$(kubectl config current-context)
+  echo "$(kubectl config view -o=jsonpath="{.contexts[?(@.name==\"${cur_ctx}\")].context.namespace}")"
+}
+
+ns_param() {
+  local ns=$(ns_select)
+  if [[ ! -z ${ns:-} ]]; then
+    echo "--namespace=${ns}"
+  fi
+}
+
+ns_list() {
+  kubectl get namespaces -o=jsonpath='{range .items[*].metadata.name}{@}{"\n"}{end}'
+}
+
+ns_number_list() {
+  ns_list | nl
+}
+
+ns_select() {
+  if [[ ! -z ${NS:-} ]]; then
+    ns_list | sed -n ${NS}p
+  elif [[ ! -z ${NAMESPACE:-} ]]; then
+    echo $NAMESPACE
+  else
+    ns_current
+  fi
+}
+
+# pod management functions
+
+# select pod
+po_list_state() {
+  names=($(kubectl $(ns_param) get pods -o=jsonpath='{range .items[*].metadata.name}{@}{"\n"}{end}'))
+  states=($(kubectl $(ns_param) get pods -o=jsonpath='{range .items[*].status.phase}{@}{"\n"}{end}'))
+  for (( i=0; $i < ${#names[@]}; i+=1 )); do echo "${names[i]}: ${states[i]}"; done
+}
+
+po_list() {
+  kubectl $(ns_param) \
+    get pods \
+    -o=jsonpath='{range .items[*].metadata.name}{@}{"\n"}{end}'
+}
+
+po_number_list() {
+  po_list_state | nl
+}
+
+po_select() {
+  po_list | sed -n ${POD:-1}p
+}
+
+
 # $ kubectl pod-interface pdel [option] 
+
+# pdel helpers
+po_del() {
+  kubectl $(ns_param) \
+    delete pod $(po_select)
+}
+
+po_del_all() {
+  kubectl $(ns_param) \
+    delete pod $(po_list)
+}
+
+po_del_force() {
+  kubectl \
+    delete pod $(kubectl get pods -o=jsonpath='{range .items[*].metadata.name}{@}{"\n"}{end}' |head -n1)
+}
+
 function pdel() {
 
     # Transform long options to short ones. Sick trick.
@@ -145,6 +206,45 @@ function pdel() {
 
 # pex: $ kubectl pod-interface pex [option]
 
+# pex helpers
+po_exec() {
+  kubectl $(ns_param) \
+    exec -it $(po_select) -- sh -c ${COMMAND:-bash}
+}
+
+con_list() {
+  kubectl $(ns_param) \
+    get po $(po_select) \
+    -o=jsonpath='{..containers[*].name}' \
+    | tr " " "\n" \
+    | sort -u
+}
+
+con_number_list() {
+  con_list | nl
+}
+
+con_select() {
+  con_list | sed -n ${CON:-1}p
+}
+
+con_count() {
+  con_list | wc -w
+}
+
+co_param() {
+  local container=$(con_select)
+  if [[ $(con_count) -gt 1 && ! -z ${container:-} ]]; then
+    echo "--container=${container}"
+  fi
+}
+
+po_exec_con() {
+  kubectl $(ns_param) \
+    exec -it $(po_select) $(co_param) -- sh -c ${COMMAND:-bash}
+}
+
+# pex controller
 function pex() {
     # Transform long options to short ones. Sick trick.
     # http://stackoverflow.com/a/30026641/4096495
@@ -185,6 +285,55 @@ function pex() {
 
 # plg: $ kubectl pod-interface plg [option]
 
+#plg helpers
+
+con_list() {
+  kubectl $(ns_param) \
+    get po $(po_select) \
+    -o=jsonpath='{..containers[*].name}' \
+    | tr " " "\n" \
+    | sort -u
+}
+
+con_number_list() {
+  con_list | nl
+}
+
+con_select() {
+  con_list | sed -n ${CON:-1}p
+}
+
+con_count() {
+  con_list | wc -w
+}
+
+co_param() {
+  local container=$(con_select)
+  if [[ $(con_count) -gt 1 && ! -z ${container:-} ]]; then
+    echo "--container=${container}"
+  fi
+}
+
+# Arg 1: bool
+#   Whether or not to kubectl --follow.
+po_log() {
+  if [[ ${1:-} == 'true' ]]; then
+    FOLLOW_STRING="--follow"
+  fi
+
+  kubectl $(ns_param) \
+    logs $(po_select) $(co_param) ${FOLLOW_STRING:-}
+}
+
+po_log_follow() {
+  if [[ ${FOLLOW:-} == 'true' ]]; then
+    FOLLOW_BOOL='true'
+  fi
+
+  po_log ${FOLLOW_BOOL:-}
+}
+
+# plg controller function
 function plg() {
 
     # Transform long options to short ones. Sick trick.
@@ -228,6 +377,125 @@ function plg() {
 
 # pof: kubectl pod-interface pof [option]
 
+# pof helpers
+
+port_list() {
+  kubectl get po $(ctx_param) $(ns_param) $(po_select)\
+  -o=jsonpath='{..containerPort}' \
+  | tr " " "\n" \
+  | sort -u
+}
+
+# Because *nix denies binding to ports below 1001, we assign a port of N+50000,
+# where `n` is a sub-1001 port. Much better to adhere to the security protocol
+# than to manipulate the bash binary.
+# See second caveat: https://stackoverflow.com/a/414258/4096495
+port_check() {
+  if [[ $1 -lt 1001 ]]; then
+    echo "$(($1+50000))";
+  else
+    echo $1;
+  fi
+}
+
+port_x() {
+  for i in $(port_list); do
+    echo $(port_check $i):${i}
+  done
+}
+
+port_number_list() {
+  port_list | nl
+}
+
+po_pf_all() {
+  # Store CMD as an array, because passing strings with colons is unpredictable.
+  local CMD=(kubectl port-forward $(ctx_param) $(ns_param) $(po_select) $(port_x))
+  if [ ! -z "${KILLD:-}" ]; then killd "${CMD[@]}"; exit 0; fi
+  checkdaemon "${CMD[@]}"
+}
+
+# Requires daemon process CMD array as argument.
+killd() {
+  CMD=("$@")
+  STRING=$(printf ' %q' "${CMD[@]}"  | sed -e 's/^[[:space:]]*//')
+  local PID=$(ps -aef | grep $STRING | grep -v grep | awk '{print $2}')
+  if [ ! -z "${PID}" ]; then
+    kill -9 ${PID} || true
+  fi
+
+  # Remove CMD entry from daemon file.
+  local TMPFILE="${APPDIR}"/kpoofd.tmp
+  if [ -f $DAEMONSFILE ]; then
+    awk -v cmd=$STRING '$0!=cmd {print $0}' $DAEMONSFILE > $TMPFILE && mv $TMPFILE $DAEMONSFILE
+  fi
+}
+
+killdall() {
+  if [ -f $DAEMONSFILE ]; then
+    while read CMD;
+    do
+      killd ${CMD}
+    done < $DAEMONSFILE
+    rm $DAEMONSFILE
+  fi
+}
+
+# Requires daemon process CMD array as argument.
+checkdaemon() {
+  CMD=("$@")
+  if [ ! -z "${DAEMON:-}" ]; then
+    daemon "${CMD[@]}"
+  else
+    "${CMD[@]}"
+  fi
+}
+
+# Requires daemon process CMD array as argument.
+# Each daemon CMD (see `man ps`) consists of a unique `kubectl port-forward`
+# command string, represented in this argument as an array.
+daemon() {
+  CMD=("$@")
+  STRING=$(printf ' %q' "${CMD[@]}"  | sed -e 's/^[[:space:]]*//')
+  # Always kill any running version of this exact process to avoid port-forward
+  # conflicts.
+  # Note that we could alternatively check whether the process is already
+  # running, and if so, not bother killing/restarting the daemon. owever, if the
+  # earlier running process is running but no longer works, then the user would
+  # need to `kpoof -k` to kill it and then `kpoof -d` to start it again. Since
+  # the port-forward process is quick to both kill and start, we do it for the
+  # user automatically to save manual checking and frustration.
+  killd "${CMD[@]}"
+
+  # Start daemon.
+  "${CMD[@]}" > ${LOGFILE} 2>&1 &
+
+  # Add to list of running daemons.
+  echo $STRING >> ${DAEMONSFILE}
+
+  # Give the user initial output so they have immediate port-forwarding info
+  # even when daemonizing. However, it may take a short time for the kubectl
+  # port-forward command to write output to the logfile, so wait a reasonable
+  # amount of time (10 seconds total, at 1/2 second intervals).
+  for i in $(seq 1 20);
+  do
+    OUTPUT=$(cat ${LOGFILE})
+    if [ ! -z "$OUTPUT" ]; then
+      echo "${OUTPUT}"
+      echo 'When finished, stop this daemon process with kpoof -k, or stop all kubectl port-forward processes with kpoof -a'
+      exit 0
+    fi
+    echo 'Port forwarding is still pending. Waiting...'
+    sleep 0.5
+  done
+  echo "Port forwarding didn't resolve within 10 seconds"
+}
+
+initappdir() {
+  mkdir -p ${APPDIR}
+}
+
+# pof controller function
 function pof() {
     # Transform long options to short ones. Sick trick.
     # http://stackoverflow.com/a/30026641/4096495
